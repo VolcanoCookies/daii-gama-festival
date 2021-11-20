@@ -8,14 +8,19 @@
 
 model DanceFloor
 
-import "Id.gaml"
+import "Base.gaml"
 
-species DanceFloor parent: Identifiable {
+species DanceFloor parent: Base {
 	
-	int radius <- 15;
+	init {
+		visible <- hexagon(15) inter host.world.shape;
+		shape <- hexagon(12) inter host.world.shape;
+	}
+	
+	geometry visible;
 	
 	aspect base {
-		draw circle(radius) color: rgb(200, 100, 225, 100);
+		draw visible color: rgb(200, 100, 225, 100);
 	}
 	
 }

@@ -11,9 +11,9 @@ model Center
 import "Guest.gaml"
 import "Guard.gaml"
 import "Store.gaml"
-import "Id.gaml"
+import "Base.gaml"
 
-species Center skills: [fipa] parent: Identifiable {
+species Center skills: [fipa] parent: Base {
 	
 	list<Guest> hitlist <- [];
 
@@ -24,21 +24,20 @@ species Center skills: [fipa] parent: Identifiable {
 		
 		Store s <- (Store where ((!require_food or each.has_food) and (!require_water or each.has_water))) closest_to location;
 		
-		do agree message: query contents: ['accepted'];
-		do inform message: query contents: [s.id];
+		do agree message: query contents: ['okay'];
+		do inform message: query contents: ['closest store', s.id];
 	}
 	
 	reflex respond_to_requests when: !empty(requests) {
 		message r <- requests at 0;
-		Guest thief <- agent_from_message(r, 1) as Guest;
+		Guest thief <- Guest(read_agent(r, 1));
 		add thief to: hitlist;
 		do agree message: r contents: ['okay'];
 	}
 	
 	reflex when: !empty(proposes) {
 		
-		
-		map<Guest, list> hit_map <- proposes group_by agent_from_message(each, 1);
+		map<Guest, list> hit_map <- proposes group_by read_agent(each, 1);
 		
 		Guest hit <- any(hit_map.keys);
 		list<message> proposals <- hit_map at hit;

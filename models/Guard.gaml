@@ -32,7 +32,7 @@ species Guard parent: Human control: fsm {
 		
 		transition to: hunt when: !empty(accept_proposals) {
 			message p <- accept_proposals at 0;
-			target <- agent_from_message(p, 1);
+			target <- read_agent(p, 1);
 		}
 		
 		do wander;
@@ -41,18 +41,18 @@ species Guard parent: Human control: fsm {
 	
 	state hunt {
 		
-		if !empty(cfps) {
-			loop cfp over: cfps {
-				do refuse message: cfp contents: ['busy'];
-			}
+		loop cfp over: cfps {
+			do refuse message: cfp contents: ['busy'];
 		}
+		
+		transition to: idle when: dead(target as agent);
 		
 		transition to: idle when: at_target() {
 			ask target as Guest {
 				do die_gracefully();
 			}
 			
-			do start_conversation (to :: [any(Gate)], protocol :: 'fipa-request', performative :: 'request', contents :: ['let guest in']);
+			do start_conversation to: [any(Gate)] protocol: 'fipa-request' performative: 'request' contents: ['let guest in'];
 			
 			target <- nil;
 		}
@@ -70,7 +70,11 @@ species Guard parent: Human control: fsm {
 	
 	aspect base {		
 		draw sphere(1.5) color: rgb(150, 150, 255);
-		draw link(self, target) color: #blue;
+		
+		if draw_target_lines {
+			draw link(self, target as point) color: #red;
+		}
+
 	}
 	
 }

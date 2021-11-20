@@ -8,9 +8,9 @@
 
 model Store
 
-import "Id.gaml"
+import "Base.gaml"
 
-species Store parent: Identifiable {
+species Store parent: Base {
 	
 	init {
 		if flip(0.3) {

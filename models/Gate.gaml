@@ -11,9 +11,10 @@ model Gate
 import "Guest.gaml"
 import "Guard.gaml"
 import "Store.gaml"
-import "Id.gaml"
+import "Base.gaml"
+import "Festival.gaml"
 
-species Gate skills: [fipa] parent: Identifiable {
+species Gate skills: [fipa] parent: Base {
 	
 	reflex when: !empty(requests) {
 		message r <- requests at 0;

@@ -1,4 +1,4 @@
-/**
+ /**
 * Name: Guest
 * Based on the internal empty template. 
 * Author: frane
@@ -12,6 +12,7 @@ import "Store.gaml"
 import "Center.gaml"
 import "DanceFloor.gaml"
 import "Gate.gaml"
+import "Auctioneer.gaml"
 
 species Guest parent: Human control: fsm {
 	
@@ -24,6 +25,12 @@ species Guest parent: Human control: fsm {
 		}
 	}
 	
+	float wealth <- rnd(0.0, 2.0);
+	
+	list fan_of <- shuffle(rnd(1, length(signeers)) among signeers);
+	
+	list<Merch> inventory <- [];
+	
 	DanceFloor dance_floor <- any(DanceFloor);
 	
 	bool is_criminal <- false;
@@ -31,9 +38,31 @@ species Guest parent: Human control: fsm {
 	bool hungry <- false update: hungry or flip(0.0001);
 	bool thirsty <- false update: thirsty or flip(0.0001);
 	
-	Identifiable hurt_by <- nil;
+	Guest hurt_by <- nil;
+	
+	Auctioneer auctioneer <- nil;
+	Merch currently_auctioned <- nil;
 	
 	state idle initial: true {
+		
+		enter {
+			target <- any_location_in(dance_floor.shape);
+			auctioneer <- nil;
+		}
+		
+		if at_target() {
+			target <- dance_floor.shape;
+		}
+		
+		loop r over: requests {
+			if read(r) = 'give me your money' {
+				if flip(0.25) {
+					do refuse message: r contents: ['no'];
+				} else {
+					do agree message: r contents: ['okay'];
+				}
+			}
+		}
 		
 		transition to: hurt when: hurt_by != nil;
 		
@@ -42,14 +71,184 @@ species Guest parent: Human control: fsm {
 		}
 		
 		transition to: find_victim when: flip(0.001) {
-			target <- (Guest - self) closest_to self;
+			target <- (peers where (each.state = 'idle')) closest_to self;
 		}
 		
-		if self distance_to dance_floor < dance_floor.radius - reach {
-			do wander;
-		} else {
-			do goto target: dance_floor;
+		list possible_auctions <- informs where (read(each) = 'auctioning' and want_merch(read_agent(each, 1) as Merch));
+		
+		transition to: find_auction when: !empty(possible_auctions) {
+			do agree message: first(possible_auctions) contents: ['will participate'];
+			auctioneer <- first(possible_auctions).sender as Auctioneer;
+			currently_auctioned <- read_agent(first(possible_auctions), 1) as Merch;
 		}
+	
+	}
+	
+	bool want_merch(Merch merch) {
+		return empty(inventory where (each.item = merch.item)) and (fan_of contains merch.signed_by);
+	}
+	
+	int percieved_price(Merch merch) {
+		return float(merch.price) * (1.35 ^ float(fan_of index_of merch.signed_by)) * wealth;
+	}
+	
+	state find_auction {
+		
+		enter {
+			unknown old_target <- target;
+			target <- nil;
+			string auction_type;
+		}
+		
+		bool cancelled <- false;
+
+		loop i over: informs {
+			if i.sender = auctioneer {
+				switch read(i) {
+					match 'auction starting' {
+						target <- auctioneer.shape;
+						auction_type <- read(i, 1);
+					}
+					match 'auction cancelled' {
+						cancelled <- true;
+					}
+				}
+			}
+		}
+				
+		transition to: idle when: cancelled or dead(auctioneer) or (target = nil and state_cycle > 25) {
+			target <- old_target;
+		}
+
+		transition to: participate_dutch_auction when: at_target() and auction_type = 'dutch';
+		transition to: participate_english_auction when: at_target() and auction_type = 'english';
+		transition to: participate_vickrey_auction when: at_target() and auction_type = 'vickrey'; 
+
+		exit {
+			if at_target() {
+				do log("Participating in X auction at X", [auction_type, auctioneer]);
+			}
+		}
+
+	}
+	
+	state participate_dutch_auction {
+		
+		enter {
+			bool has_ended <- false;
+		}
+		
+		loop i over: informs where (each.sender = auctioneer) {
+			if read(i) = 'auction ended' or read(i) = 'auction cancelled' {
+				has_ended <- true;
+			}
+		}
+		
+		loop a over: accept_proposals where (each.sender = auctioneer) {
+			if read(a) = 'sold' {
+				do inform message: a contents: ['thank you'];
+				Merch merch <- Merch(read_agent(a, 1));
+				add merch to: inventory;
+				do log('Bought X for X from X', [merch, '?', auctioneer]);
+			}
+		}
+		
+		loop r over: reject_proposals {
+			do end_conversation message: r contents: [];
+		}
+		
+		loop cfp over: cfps {
+			if cfp.sender = auctioneer and read(cfp) = 'going for' {
+				int price <- int(read(cfp, 1));
+				if price < percieved_price(currently_auctioned) {
+					do propose message: cfp contents: ['buy for current'];
+				} else {
+					do refuse message: cfp contents: ['no offer'];
+				}
+			}
+		}
+		
+		transition to: idle when: has_ended or dead(auctioneer);
+		
+	}
+	
+	state participate_english_auction {
+		
+		enter {
+			int willing_to_pay <- percieved_price(currently_auctioned);
+			int last_bid <- 0;
+			bool has_ended <- false;
+		}
+		
+		loop i over: informs {
+			if i.sender = auctioneer {
+				switch read(i) {
+					match 'starting at' {
+						int starting_price <- int(read(i, 1));
+												
+						if starting_price * 1.1 <= willing_to_pay {
+							last_bid <- starting_price * rnd(1.05, 1.1);
+							do propose message: i contents: ['bidding', last_bid];
+							do log('Bidding X', [last_bid]);
+						}
+					}
+					match 'sold to for' {
+						if read_agent(i, 2) = self {
+							add Merch(read_agent(i, 1)) to: inventory;
+						}
+						has_ended <- true;
+					}
+					match 'bid by' {
+						if read_agent(i, 2) != self {
+							int bid <- int(read(i, 1));
+							if bid > last_bid and bid * 1.1 <= willing_to_pay {
+								last_bid <- bid * rnd(1.05, 1.1);
+								do propose message: i contents: ['bidding', last_bid];
+								do log('Bidding X', [last_bid]);
+							}
+						}
+					}
+					match 'auction ended' {
+						has_ended <- true;
+					}
+				}
+			}
+		}
+		
+		transition to: idle when: has_ended or dead(auctioneer);
+		
+	}
+	
+	state participate_vickrey_auction {
+		
+		enter {
+			int willing_to_pay <- percieved_price(currently_auctioned);
+			bool has_ended <- false;
+		}
+		
+		loop q over: queries {
+			if q.sender = auctioneer and read(q) = 'your bid' {
+				do propose message: q contents: ['bidding', percieved_price(currently_auctioned)];
+			}
+		}
+		
+		loop i over: informs {
+			if i.sender = auctioneer {
+				switch read(i) {
+					match 'sold to for' {
+						if read_agent(i, 2) = self {
+							add Merch(read_agent(i, 1)) to: inventory;
+						}
+						has_ended <- true;
+					}
+					match 'auction ended' {
+						has_ended <- true;
+					}
+				}
+			}
+		}
+		
+		transition to: idle when: has_ended or dead(auctioneer);
 		
 	}
 	
@@ -101,28 +300,29 @@ species Guest parent: Human control: fsm {
 		
 		enter {
 			if hungry or thirsty {
-				do start_conversation (to :: [target], protocol :: 'fipa-query', performative :: 'query', contents :: ['closest store', 'food required: ' + hungry, 'water required: ' + thirsty]);
+				do start_conversation to: [target as Center] protocol: 'fipa-query' performative: 'query' contents: ['closest store', 'food required: ' + hungry, 'water required: ' + thirsty];
 			}
 			
-			if hurt_by != nil {
-				do start_conversation (to :: [target], protocol :: 'fipa-request', performative :: 'request', contents :: ['kill', hurt_by.id]);
+			if hurt_by != nil and !dead(hurt_by) {
+				do start_conversation to: [target] protocol: 'fipa-request' performative: 'request' contents: ['kill', hurt_by.id];
 			}
 		}
 		
-		if !empty(informs) {
-			message inform <- informs at 0;
-			Store s <- agent_from_message(inform) as Store;
-			target <- s;
+		loop a over: agrees {
+			
 		}
 		
-		if !empty(agrees) {
-			remove index: 0 from: agrees;
-			target <- nil;
+		loop i over: informs {
+			if i.sender = target and read(i) = 'closest store' {
+				target <- Store(read_agent(i, 1));
+			}
 		}
 		
 		transition to: find_store when: target is Store;
 		
-		transition to: idle when: target = nil {
+		transition to: idle when: target = nil or (!hungry and !thirsty);
+		
+		exit {
 			hurt_by <- nil;
 		}
 		
@@ -160,24 +360,6 @@ species Guest parent: Human control: fsm {
 		
 	}
 
-	reflex when: !empty(requests) {
-		message r <- requests at 0;
-		string req <- (r.contents as list) at 0;
-		
-		switch req {
-			match 'give me your money' {
-				
-				if flip(0.25) {
-					do refuse message: r contents: ['no'];
-				} else {
-					do agree message: r contents: ['okay'];
-				}
-				
-			}
-		}
-				
-	}
-
 	reflex remove_agrees when: !empty(agrees) {
 		remove all: true from: agrees;
 	}
@@ -198,10 +380,19 @@ species Guest parent: Human control: fsm {
 			agent_color <- rgb(160, 200, 100);
 		}
 		
-		draw sphere(1) color: agent_color;
+		draw cone3D(0.5, 2) color: agent_color;
+		draw sphere(0.5) at: location + {0,0,1} color: agent_color;
 		
-		if state = 'find_victim' {
-			draw link(self, target) color: #red;
+		if !empty(inventory where (each.item = 'hat')) {
+			draw cone3D(0.6, 0.5) at: location + {0,0,1.8} color: #yellow;
+		}
+		
+		if !empty(inventory where (each.item = 'shirt')) {
+			draw cone3D(0.5, 1.8) at: location + {0,0,0.2} color: #blue;
+		}
+		
+		if draw_target_lines {
+			draw link(self, target as point) color: #red;
 		}
 		
 	}
