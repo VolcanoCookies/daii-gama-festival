@@ -37,32 +37,28 @@ species Center skills: [fipa] parent: Base {
 	
 	reflex when: !empty(proposes) {
 		
-		map<Guest, list> hit_map <- proposes group_by read_agent(each, 1);
+		hitlist <- distinct(hitlist where !dead(each));
 		
-		Guest hit <- any(hit_map.keys);
-		list<message> proposals <- hit_map at hit;
+		Guest hit <- any(hitlist);
 		
-		float cd <- #max_float;
-		message cm <- nil;
-		loop proposal over: proposals {
-			Guard g <- proposal.sender as Guard;
-			if g distance_to hit < cd {
-				cm <- proposal;
-			}
+		list props <- (proposes where (read_agent(each, 1) != hit));
+		props <- props sort_by (Guard(each.sender) distance_to hit);
+		
+		if !empty(props) {
+			do accept_proposal message: props at 0 contents: ['hit granted', hit.id];
+			remove index: 0 from: props;
 		}
-		
-		do accept_proposal message: cm contents: ['hit granted', hit.id];
-		remove hit from: hitlist;
-		
-		loop reject_p over: (proposals - cm) {
-			do reject_proposal message: reject_p contents: ['already taken'];
+		loop p over: props {
+			do reject_proposal message: p contents: ['already taken'];	
 		}
 		
 	}
 	
 	reflex when: !empty(hitlist) {
 		Guest top <- hitlist at 0;
-		do start_conversation to: list(Guard) protocol: 'fipa-contract-net' performative: 'cfp' contents: ['kill', top.id] ;
+		if !dead(top) {
+			do start_conversation to: list(Guard) protocol: 'fipa-contract-net' performative: 'cfp' contents: ['kill', top.id] ;	
+		}
 	}
 	
 

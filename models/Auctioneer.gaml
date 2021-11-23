@@ -20,9 +20,9 @@ global {
 	
 	bool only_dutch_auctions <- false;
 	
-	int dutch_value_gained <- 0;
-	int english_value_gained <- 0;
-	int vickrey_value_gained <- 0;
+	float dutch_value_gained <- 0;
+	float english_value_gained <- 0;
+	float vickrey_value_gained <- 0;
 	
 	int dutch_completed <- 0;
 	int english_completed <- 0;
@@ -36,14 +36,14 @@ species Merch parent: Base {
 	string signed_by <- any(signeers);
 	
 	string to_string {
-		return "[" + item + " : " + price + "]";
+		return "[" + item + " : " + string(price) + "]";
 	}
 }
 
 species Auctioneer skills: [fipa] parent: Human control: fsm {
 
 	init {
-		create Merch number: 10 returns: created_merch;
+		create Merch number: 25 returns: created_merch;
 		merchandise <- created_merch;
 
 		do goto target: host.world.location speed: 5;
@@ -58,11 +58,15 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 
 	state idle initial: true {
 		
+		enter {
+			int cooldown <- rnd(10, 100);	
+		}
+		
 		transition to: leave when: empty(merchandise) {
 			do log("No more merch, leaving festival");
 		}
 		
-		transition to: starting_auction when: !empty(merchandise) {
+		transition to: starting_auction when: !empty(merchandise) and state_cycle > cooldown {
 			currently_auctioning <- any(merchandise);
 			remove currently_auctioning from: merchandise;
 		}
@@ -72,6 +76,11 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 	state starting_auction {
 		
 		enter {
+			
+			loop m over: mailbox {
+				do inform message: m contents: ['auction ended'];
+			}
+			
 			string auction_type;
 			if only_dutch_auctions {
 				auction_type <- 'dutch';
@@ -80,54 +89,55 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 			}
 			
 			do start_conversation to: list(Guest) protocol: 'no-protocol' performative: 'inform' contents: ['auctioning', currently_auctioning.id];
-			int waited <- 0;
 			do log("Starting X auction for X", [auction_type, currently_auctioning]);
 			
+			participants <- [];
+			
+			bool start_auction <- false;
+			bool will_start <- false;
 		}
 		
-		waited <- waited + 1;
-		participants <- participants where !dead(each);
+		loop r over: refuses {}
 		
-		if waited = 4 {
+		if state_cycle = 5 {
 			
-			list auction_agrees <- agrees where (read(each) = 'will participate');			
-			participants <- auction_agrees collect (each.sender as Guest);
-			bool will_start <- length(participants) >= minimum_participants;
-			
-			loop a over: auction_agrees {
+			list agrees_copy <- copy(agrees);
+			will_start <- agrees_copy count (read(each) = 'will participate') >= minimum_participants;
+		
+			loop a over: agrees_copy {
 				if will_start {
 					do inform message: a contents: ['auction starting', auction_type];
-					do end_conversation message: a contents: [];	
+					add Guest(a.sender) to: participants;
 				} else {
 					do inform message: a contents: ['auction cancelled'];
-					do end_conversation message: a contents: [];	
 				}
-			}
-		
-			loop r over: refuses {
-				do end_conversation message: r contents: [];
+				do end_conversation message: a contents: [];
 			}
 			
 		}
 		
-		transition to: idle when: waited > 200 or (waited > 4 and length(participants) < minimum_participants) {
-			remove all: true from: conversations;
-			if !empty(participants) {
-				do start_conversation to: participants protocol: 'no-protocol' performative: 'cancel' contents: ['auction cancelled'];
-			}
-			do log("Not enough participants for auction");
+		participants <- participants where !dead(each);
+		
+		if state_cycle = 10 {
+			participants <- participants where (each.state != 'idle');
 		}
 		
-		bool can_hold <- (participants all_match (each.at_target())) and length(participants) >= minimum_participants;
+		if will_start and (participants all_match (each.at_target() and each.state != 'idle')) {
+			start_auction <- true;
+		}
 		
-		transition to: hold_dutch_auction when: can_hold and auction_type = 'dutch';
+		transition to: idle when: state_cycle > 10 and !will_start {
+			do log("Not enough participants for auction");
+		}
+
+		transition to: hold_dutch_auction when: start_auction and auction_type = 'dutch';
 		
-		transition to: hold_english_auction when: can_hold and auction_type = 'english';
+		transition to: hold_english_auction when: start_auction and auction_type = 'english';
 		
-		transition to: hold_vickrey_auction when: can_hold and auction_type = 'vickrey';
+		transition to: hold_vickrey_auction when: start_auction and auction_type = 'vickrey';
 		
 		exit {
-			if can_hold {
+			if start_auction {
 				do log("Holding X auction for X with X participants", [auction_type, currently_auctioning, length(participants)]);
 			}
 		}
@@ -142,17 +152,28 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 			int current_price <- min_price * rnd(10, 20);
 			int price_step <- (current_price - min_price) / 50;
 			bool sold <- false;
+			
+			int response_time <- 0;
 		}
 		
-		waiting_for <- waiting_for where !dead(each);
 		participants <- participants where !dead(each);
+		waiting_for <- waiting_for where !dead(each);
+		
+		response_time <- response_time + 1;
+		
+		if response_time > 5 {
+			loop w over: waiting_for {
+				remove w from: participants;
+			}
+			waiting_for <- [];
+			response_time <- 0;
+		}
 		
 		loop i over: informs {
 			Guest g <- i.sender as Guest;
 			if read(i) = 'leaving auction' {
 				remove g from: participants;
 				remove g from: waiting_for;
-				do end_conversation message: i contents: ['ok'];
 			}
 		}
 		
@@ -166,8 +187,10 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 					do accept_proposal message: p contents: ['sold', currently_auctioning.id];
 					sold <- true;
 					do log('Sold X to X for X', [currently_auctioning, p.sender, current_price]);
-					dutch_value_gained <- dutch_value_gained + current_price - currently_auctioning.price;
+					dutch_value_gained <- dutch_value_gained + (current_price / currently_auctioning.price);
 					dutch_completed <- dutch_completed + 1;
+					
+					save [current_price, Guest(p.sender).percieved_price(currently_auctioning), currently_auctioning.price, 'dutch'] to: 'auction stats.csv' rewrite: false type: 'csv';
 				}
 			} else {
 				do reject_proposal message: p contents: ['unknown'];
@@ -183,6 +206,7 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 		
 		if empty(waiting_for) and current_price >= min_price {
 			add all: participants to: waiting_for;
+			response_time <- 0;
 			do start_conversation to: participants protocol: 'fipa-contract-net' performative: 'cfp' contents: ['going for', current_price];
 			do log("Going for X", [current_price]);
 			current_price <- current_price - price_step;
@@ -190,7 +214,9 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 		
 		transition to: end_auction when: sold or (empty(waiting_for) and current_price < min_price) or empty(participants) {
 			do log("Auction for X ended", [currently_auctioning]);
-			do start_conversation to: participants protocol: 'no-protocol' performative: 'inform' contents: ['auction ended'];
+			if !empty(participants) {
+				do start_conversation to: participants protocol: 'no-protocol' performative: 'inform' contents: ['auction ended'];	
+			}
 		}
 		
 	}
@@ -209,7 +235,7 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 		loop p over: proposes {
 			if participants contains p.sender and read(p) = 'bidding' {
 				int bid <- int(read(p, 1));
-				if bid > last_bid {
+				if bid > last_bid and !dead(Guest(p.sender)) {
 					last_bid <- bid;
 					last_bidder <- p.sender;
 					do start_conversation to: participants protocol: 'no-protocol' performative: 'inform' contents: ['bid by', bid, last_bidder.id];
@@ -222,9 +248,21 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 		transition to: end_auction when: waited > 10 {
 			
 			if last_bidder != nil {
-				do start_conversation to: participants protocol: 'no-protocol' performative: 'inform' contents: ['sold to for', currently_auctioning.id, last_bidder.id, last_bid];	
-				english_value_gained <- english_value_gained + last_bid - currently_auctioning.price;
+				
+				string winner_id;
+				if !dead(last_bidder) {
+					winner_id <- last_bidder.id;
+				} else {
+					winner_id <- 'dead';
+				}
+				
+				do start_conversation to: participants protocol: 'no-protocol' performative: 'inform' contents: ['sold to for', currently_auctioning.id, winner_id, last_bid];	
+				english_value_gained <- english_value_gained + (last_bid / currently_auctioning.price);
 				english_completed <- english_completed + 1;
+				
+				if !dead(last_bidder) {
+					save [last_bid, last_bidder.percieved_price(currently_auctioning), currently_auctioning.price, 'english'] to: 'auction stats.csv' rewrite: false type: 'csv';
+				}
 			} else {
 				do start_conversation to: participants protocol: 'no-protocol' performative: 'inform' contents: ['auction ended'];
 			}
@@ -241,7 +279,9 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 		
 		transition to: end_auction when: state_cycle > 10 {
 			
-			list bids <- (proposes where (read(each) = 'bidding')) sort_by -int(read(each, 1));
+			participants <- participants where !dead(each);
+			
+			list bids <- (proposes where (read(each) = 'bidding' and !dead(Guest(each.sender)))) sort_by -int(read(each, 1));
 			
 			if length(bids) < 2 {
 				do start_conversation to: participants protocol: 'no-protocol' performative: 'inform' contents: ['auction ended'];
@@ -252,8 +292,10 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 				
 				do log('Sold to X for X', [winner, price]);
 				
-				vickrey_value_gained <- vickrey_value_gained + price - currently_auctioning.price;
+				vickrey_value_gained <- vickrey_value_gained + (price / currently_auctioning.price);
 				vickrey_completed <- vickrey_completed + 1;
+				
+				save [price, winner.percieved_price(currently_auctioning), currently_auctioning.price, 'vickrey'] to: 'auction stats.csv' rewrite: false type: 'csv';	
 				do start_conversation to: participants protocol: 'no-protocol' performative: 'inform' contents: ['sold to for', currently_auctioning.id, winner.id, price];
 			}
 			
@@ -264,16 +306,14 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 	state end_auction {
 		
 		enter {
-			int cooldown <- rnd(10, 100);
 			currently_auctioning <- nil;
 			participants <- [];
 		}		
-		cooldown <- cooldown - 1;
 
-		transition to: idle when: cooldown < 0;
+		transition to: idle when: state_cycle > 5;
 		
 		loop m over: mailbox {
-			do end_conversation message: m contents: [];
+			//do end_conversation message: m contents: [];
 		}
 		
 	}
@@ -291,7 +331,16 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 	}
 	
 	aspect base {
-		draw sphere(1) color: #blue;
+		
+		rgb agent_color;
+		
+		if ['hold_dutch_auction', 'hold_english_auction', 'hold_vickrey_auction'] contains state {
+			agent_color <- #cyan;
+		} else{
+			agent_color <- #blue;
+		}
+		
+		draw sphere(1) color: agent_color;
 		draw shape color: #pink;
 		
 		if draw_target_lines {

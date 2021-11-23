@@ -77,10 +77,10 @@ species Base skills: [fipa] virtual: true {
 			int i <- m index_of OBJECT_PLACEHOLDER;
 			string s <- copy_between(m, 0, i);
 			string e <- copy_between(m, i + length(OBJECT_PLACEHOLDER), length(m));
-			if o is string {
-				m <- s + o + e;
-			} else if Base(o) != nil {
-				m <- s + Base(o).to_string() + e;				
+			if o is Base and Base(o) != nil {
+				m <- s + Base(o).to_string() + e;
+			} else if o is string {
+				m <- s + o + e;				
 			} else {
 				m <- s + o + e;
 			}

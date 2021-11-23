@@ -42,12 +42,18 @@ species Guest parent: Human control: fsm {
 	
 	Auctioneer auctioneer <- nil;
 	Merch currently_auctioned <- nil;
+	string auction_type <- nil;
 	
 	state idle initial: true {
 		
 		enter {
 			target <- any_location_in(dance_floor.shape);
+			
 			auctioneer <- nil;
+			currently_auctioned <- nil;
+			auction_type <- nil;
+			
+			bool auction_starting <- false;
 		}
 		
 		if at_target() {
@@ -64,6 +70,37 @@ species Guest parent: Human control: fsm {
 			}
 		}
 		
+		loop i over: informs {
+			switch read(i) {
+				match 'auctioning' {
+					Merch merch <- Merch(read_agent(i, 1));
+					if auctioneer = nil {
+						if want_merch(merch) {
+							auctioneer <- Auctioneer(i.sender);
+							currently_auctioned <- merch;
+							do agree message: i contents: ['will participate'];
+						}
+					} else {
+						do refuse message: i contents: ['busy'];
+					}
+				}
+				match 'auction starting' {
+					if Auctioneer(i.sender) = auctioneer {
+						target <- auctioneer.shape;
+						auction_type <- read(i, 1);
+						auction_starting <- true;
+					}
+				}
+				match 'auction cancelled' {
+					if Auctioneer(i.sender) = auctioneer {
+						auctioneer <- nil;
+					}
+				}
+			}
+		}
+		
+		transition to: find_auction when: auction_starting;
+	
 		transition to: hurt when: hurt_by != nil;
 		
 		transition to: find_center when: hungry or thirsty {
@@ -74,18 +111,11 @@ species Guest parent: Human control: fsm {
 			target <- (peers where (each.state = 'idle')) closest_to self;
 		}
 		
-		list possible_auctions <- informs where (read(each) = 'auctioning' and want_merch(read_agent(each, 1) as Merch));
-		
-		transition to: find_auction when: !empty(possible_auctions) {
-			do agree message: first(possible_auctions) contents: ['will participate'];
-			auctioneer <- first(possible_auctions).sender as Auctioneer;
-			currently_auctioned <- read_agent(first(possible_auctions), 1) as Merch;
-		}
 	
 	}
 	
 	bool want_merch(Merch merch) {
-		return empty(inventory where (each.item = merch.item)) and (fan_of contains merch.signed_by);
+		return flip(0.5) and empty(inventory where (each.item = merch.item)) and (fan_of contains merch.signed_by);
 	}
 	
 	int percieved_price(Merch merch) {
@@ -95,40 +125,28 @@ species Guest parent: Human control: fsm {
 	state find_auction {
 		
 		enter {
-			unknown old_target <- target;
-			target <- nil;
-			string auction_type;
+			bool cancelled <- false;
 		}
 		
-		bool cancelled <- false;
-
 		loop i over: informs {
 			if i.sender = auctioneer {
 				switch read(i) {
-					match 'auction starting' {
-						target <- auctioneer.shape;
-						auction_type <- read(i, 1);
-					}
 					match 'auction cancelled' {
 						cancelled <- true;
 					}
 				}
+			} else if read(i) = 'auctioning' {
+				do refuse message: i contents: ['busy'];
 			}
 		}
 				
 		transition to: idle when: cancelled or dead(auctioneer) or (target = nil and state_cycle > 25) {
-			target <- old_target;
+			target <- nil;
 		}
 
 		transition to: participate_dutch_auction when: at_target() and auction_type = 'dutch';
 		transition to: participate_english_auction when: at_target() and auction_type = 'english';
 		transition to: participate_vickrey_auction when: at_target() and auction_type = 'vickrey'; 
-
-		exit {
-			if at_target() {
-				do log("Participating in X auction at X", [auction_type, auctioneer]);
-			}
-		}
 
 	}
 	
@@ -138,8 +156,8 @@ species Guest parent: Human control: fsm {
 			bool has_ended <- false;
 		}
 		
-		loop i over: informs where (each.sender = auctioneer) {
-			if read(i) = 'auction ended' or read(i) = 'auction cancelled' {
+		loop i over: informs {
+			if i.sender = auctioneer and ['auction ended', 'auction cancelled'] contains read(i) {
 				has_ended <- true;
 			}
 		}
@@ -148,14 +166,13 @@ species Guest parent: Human control: fsm {
 			if read(a) = 'sold' {
 				do inform message: a contents: ['thank you'];
 				Merch merch <- Merch(read_agent(a, 1));
+				int price <- int(read(a, 2));
 				add merch to: inventory;
-				do log('Bought X for X from X', [merch, '?', auctioneer]);
+				do log('Bought X for X from X', [merch, price, auctioneer]);
 			}
 		}
 		
-		loop r over: reject_proposals {
-			do end_conversation message: r contents: [];
-		}
+		loop r over: reject_proposals {}
 		
 		loop cfp over: cfps {
 			if cfp.sender = auctioneer and read(cfp) = 'going for' {
@@ -178,6 +195,8 @@ species Guest parent: Human control: fsm {
 			int willing_to_pay <- percieved_price(currently_auctioned);
 			int last_bid <- 0;
 			bool has_ended <- false;
+			
+			do log("Participating in X auction at X", [auction_type, auctioneer]);
 		}
 		
 		loop i over: informs {
@@ -254,6 +273,8 @@ species Guest parent: Human control: fsm {
 	
 	state find_victim {
 		
+		transition to: idle when: dead(target as Guest);
+		
 		transition to: mug when: at_target() {
 			do start_conversation (to :: [target], protocol :: 'fipa-request', performative :: 'request', contents :: ['give me your money']);
 		}
@@ -261,6 +282,8 @@ species Guest parent: Human control: fsm {
 	}
 	
 	state mug { 
+
+		transition to: idle when: dead(target as Guest);
 
 		transition to: idle when: !empty(refuses) {
 			// Such a vicious beating

@@ -12,20 +12,16 @@ import "Base.gaml"
 import "Store.gaml"
 import "Center.gaml"
 
-global {
-	geometry world_plane <- square(100) translated_by {50, 50};
-}
-
 species Human skills: [moving, fipa] parent: Base virtual: true {
 	
 	float reach <- 2.0;
 	float reachable_from <- 0.0;
 	float intoxication <- 0.0;
-	
+
 	unknown target <- nil;
+	point target_in_geometry <- nil;
 	
 	bool can_reach(unknown u) {
-		
 		if u = nil or (agent(u) != nil and dead(agent(u))) {
 			return false;
 		} else if u is point {
@@ -40,7 +36,6 @@ species Human skills: [moving, fipa] parent: Base virtual: true {
 		} else {
 			return false;
 		}
-		
 	}
 	
 	bool at_target {
@@ -49,14 +44,21 @@ species Human skills: [moving, fipa] parent: Base virtual: true {
 	
 	geometry bounds { 
 		if target is geometry and at_target() {
-			return geometry(target);
+			return geometry(target) inter host.world.shape;
 		} else {
 			return host.world.shape;
 		}
 	}
 	
 	reflex move_to_target when: target != nil and !at_target() {
-		do goto target: target;
+		if target is geometry {
+			if target_in_geometry = nil or !(target_in_geometry intersects geometry(target)){
+				target_in_geometry <- any_location_in(geometry(target));
+			}
+			do goto target: target_in_geometry;
+		} else {
+			do goto target: target;	
+		}
 	}
 	
 	reflex stumble when: intoxication > 0 {
@@ -80,6 +82,14 @@ species Human skills: [moving, fipa] parent: Base virtual: true {
 				do move heading: angle speed: -0.5 bounds: bounds();	
 			}
 		}
+	}
+	
+	action clear_mailbox {
+		remove all: true from: mailbox;
+	}
+	
+	action clear_conversations {
+		remove all: true from: conversations;
 	}
 	
 }
