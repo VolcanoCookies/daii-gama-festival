@@ -20,13 +20,9 @@ global {
 	
 	bool only_dutch_auctions <- false;
 	
-	float dutch_value_gained <- 0;
-	float english_value_gained <- 0;
-	float vickrey_value_gained <- 0;
-	
-	int dutch_completed <- 0;
-	int english_completed <- 0;
-	int vickrey_completed <- 0;
+	reflex when: length(Auctioneer) < AUCTIONEER_COUNT and flip(0.01) {
+		create Auctioneer;
+	}
 	
 }
 
@@ -187,9 +183,7 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 					do accept_proposal message: p contents: ['sold', currently_auctioning.id];
 					sold <- true;
 					do log('Sold X to X for X', [currently_auctioning, p.sender, current_price]);
-					dutch_value_gained <- dutch_value_gained + (current_price / currently_auctioning.price);
-					dutch_completed <- dutch_completed + 1;
-					
+
 					save [current_price, Guest(p.sender).percieved_price(currently_auctioning), currently_auctioning.price, 'dutch'] to: 'auction stats.csv' rewrite: false type: 'csv';
 				}
 			} else {
@@ -257,8 +251,6 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 				}
 				
 				do start_conversation to: participants protocol: 'no-protocol' performative: 'inform' contents: ['sold to for', currently_auctioning.id, winner_id, last_bid];	
-				english_value_gained <- english_value_gained + (last_bid / currently_auctioning.price);
-				english_completed <- english_completed + 1;
 				
 				if !dead(last_bidder) {
 					save [last_bid, last_bidder.percieved_price(currently_auctioning), currently_auctioning.price, 'english'] to: 'auction stats.csv' rewrite: false type: 'csv';
@@ -291,9 +283,6 @@ species Auctioneer skills: [fipa] parent: Human control: fsm {
 				int price <- int(read(bids at 1, 1));
 				
 				do log('Sold to X for X', [winner, price]);
-				
-				vickrey_value_gained <- vickrey_value_gained + (price / currently_auctioning.price);
-				vickrey_completed <- vickrey_completed + 1;
 				
 				save [price, winner.percieved_price(currently_auctioning), currently_auctioning.price, 'vickrey'] to: 'auction stats.csv' rewrite: false type: 'csv';	
 				do start_conversation to: participants protocol: 'no-protocol' performative: 'inform' contents: ['sold to for', currently_auctioning.id, winner.id, price];

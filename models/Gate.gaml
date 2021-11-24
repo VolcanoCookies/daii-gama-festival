@@ -29,10 +29,6 @@ species Gate skills: [fipa] parent: Base {
 		}
 	}
 	
-	reflex when: length(Auctioneer) < AUCTIONEER_COUNT and flip(0.01) {
-		create Auctioneer;
-	}
-	
 	aspect base {
 		draw cube(2) color: #yellow;
 	}

@@ -29,7 +29,7 @@ global {
 	int CENTER_COUNT <- 2 const: true;
 	int GATE_COUNT <- 1 const: true;
 	int DANCE_FLOOR_COUNT <- 2 const: true;
-	int AUCTIONEER_COUNT <- 3 const: true;
+	int AUCTIONEER_COUNT <- 1;
 
 	init {
 		
@@ -56,12 +56,9 @@ experiment Festival type: gui {
 	parameter 'Target Lines' var: draw_target_lines;
 	parameter 'Only dutch auctions' var: only_dutch_auctions;
 	parameter 'Enable all logs' var: enable_all_logs;
+	parameter 'Auctioneer count' var: AUCTIONEER_COUNT;
 	
 	output {
-		
-		monitor "Dutch value gain" value: string(int(100 * dutch_value_gained / max(dutch_completed, 1))) + "%" refresh: true;
-		monitor "English value gain" value: string(int(100 * english_value_gained / max(english_completed, 1))) + "%" refresh: true;
-		monitor "Vickrey value gain" value: string(int(100 * vickrey_value_gained / max(vickrey_completed, 1))) + "%" refresh: true;	
 		
 		display "World" type: opengl background: #white { 
 			species Guest aspect: base;
